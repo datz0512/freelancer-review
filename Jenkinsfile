@@ -28,7 +28,16 @@ pipeline {
 
     stage("Prepare Environment") {
       steps {
-        git branch: 'main', credentialsId: 'github', url: 'https://github.com/datz0512/freelancer-review'
+        sh "[ -d pipeline ] || mkdir pipeline"
+        dir("pipeline") {
+          // Add your jenkins automation url to url field
+          git branch: 'main', credentialsId: 'github', url: ''
+          script {
+            groovyMethods = load("functions.groovy")
+          }
+        }
+        // Add your chat review url to url field
+        git branch: 'main', credentialsId: 'github', url: ''
         sh 'npm install'
       }
     }
@@ -66,6 +75,83 @@ pipeline {
       steps {
         sh "docker rmi $IMAGE_NAME $IMAGE_NAME:$IMAGE_TAG"
         sh "docker rmi $IMAGE_NAME $IMAGE_NAME:stable"
+      }
+    }
+
+    stage("Create New Pods") {
+      steps {
+        withKubeCredentials(kubectlCredentials: [[caCertificate: '', clusterName: '', contextName: '', credentialsId: '', namespace: '', serverUrl: '']]) {
+          script {
+            def pods = groovyMethods.findPodsFromName("${namespace}", "${serviceName}")
+            for (podName in pods) {
+              sh """
+                kubectl delete -n ${namespace} pod ${podName}
+                sleep 10s
+              """
+            }
+          }
+        }
+      }
+    }
+
+  }
+  post {
+    success {
+      script {
+        m2 = System.currentTimeMillis()
+        def durTime = groovyMethods.durationTime(m1, m2)
+        def author = groovyMethods.readCommitAuthor()
+        groovyMethods.notifySlack("", "freelancer-jenkins", [
+                [
+                  title: "BUILD SUCCEEDED: ${service} Service with build number ${env.BUILD_NUMBER}",
+                  title_link: "${env.BUILD_URL}",
+                  color: "good",
+                  text: "Created by: ${author}",
+                  "mrkdwn_in": ["fields"],
+                  fields: [
+                    [
+                      title: "Duration Time",
+                      value: "${durTime}",
+                      short: true
+                    ],
+                    [
+                      title: "Stage Name",
+                      value: "Production",
+                      short: true
+                    ],
+                  ]
+                ]
+            ]
+        )
+      }
+    }
+    failure {
+      script {
+        m2 = System.currentTimeMillis()
+        def durTime = groovyMethods.durationTime(m1, m2)
+        def author = groovyMethods.readCommitAuthor()
+        groovyMethods.notifySlack("", "freelancer-jenkins", [
+                [
+                  title: "BUILD FAILED: ${service} Service with build number ${env.BUILD_NUMBER}",
+                  title_link: "${env.BUILD_URL}",
+                  color: "error",
+                  text: "Created by: ${author}",
+                  "mrkdwn_in": ["fields"],
+                  fields: [
+                    [
+                      title: "Duration Time",
+                      value: "${durTime}",
+                      short: true
+                    ],
+                    [
+                      title: "Stage Name",
+                      value: "Production",
+                      short: true
+                    ],
+                  ]
+                ]
+            ]
+        )
       }
     }
   }
